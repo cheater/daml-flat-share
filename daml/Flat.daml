@@ -1,0 +1,96 @@
+daml 1.2
+module Flat where
+import DA.List (head)
+import DA.Time (days, addRelTime)
+
+type FlatCid = ContractId Flat
+
+-- A token that allows you to share a flat with other people.
+template Flat
+  with
+    lessor : Party -- the person who issues the token and administers the property being leased
+    address : Text -- where the property being shared and administered is
+    sharers : [Party] -- people who can use the flat as visitors by accepting control of the token
+    visitor : Party -- the person currently using the token
+    history : [(Time, Party)] -- a record of who has been using the flat historically
+  where
+
+    signatory lessor, visitor
+
+    observer sharers
+
+    controller visitor can
+
+      -- Hand over flat token to another sharer.
+      Flat_Handover : ContractId FlatHandover
+        with
+          newVisitor : Party
+        do
+          assertMsg "Visitors must be sharers of Flat"
+            (newVisitor `elem` sharers)
+          assertMsg "Cannot hand Flat over to yourself"
+            (newVisitor /= visitor)
+
+          create FlatHandover with flat = this; newVisitor
+
+    controller lessor can
+
+      -- Remove flat token from a visitor who has been overstaying
+      Flat_TakeOver : ContractId FlatHandover
+        with
+          newVisitor : Party
+        do
+          assertMsg "Visitors must be sharers of Flat"
+            (newVisitor `elem` sharers)
+          assertMsg "Cannot hand Flat over to yourself"
+            (newVisitor /= visitor)
+          now <- getTime
+          assertMsg "The current visitor must be overstaying"
+            (now > (fst . head $ history) `addRelTime` (days 7))
+
+          create FlatHandover with flat = this; newVisitor
+
+      -- Add a new person who can share the flat
+      Flat_AddSharer : FlatCid
+        with
+          newSharer : Party
+        do create this with sharers = newSharer :: sharers
+
+      -- Remove a person from being able to use the flat
+      Flat_RemoveSharer : FlatCid
+        with
+          oldSharer : Party
+        do create this with sharers = filter (/= oldSharer) sharers
+
+-- A smart contract that allows you to hand over a Flat token to another party.
+template FlatHandover
+  with
+    flat : Flat -- the Flat token being handed over
+    newVisitor : Party -- the person the token is being handed over to
+  where
+    signatory flat.lessor, flat.visitor
+
+    controller flat.visitor can
+
+      -- Cancel the hand over unilaterally
+      FlatHandover_Cancel : FlatCid
+        do create flat
+
+    controller newVisitor can
+
+      -- Reject a Flat token hand over when you don't want to visit the Flat
+      FlatHandover_Reject : FlatCid
+        do create flat
+
+      -- Accept a flat token hand over when you want to visit the Flat
+      FlatHandover_Accept : FlatCid
+        do
+          handoverTime <- getTime
+          assertMsg "Cannot hand over Flat twice at the same time."
+            (fst (head flat.history) /= handoverTime)
+
+          let handoverRecord = (handoverTime, newVisitor)
+
+          create flat with
+            visitor = newVisitor
+            history = handoverRecord :: flat.history

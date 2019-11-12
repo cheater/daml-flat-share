@@ -1,0 +1,108 @@
+daml 1.2
+module Tests.Flat where
+
+import Flat
+import DA.Time (pass, minutes, days)
+
+flat_test = scenario do
+  acme <- getParty "Acme Retreats Co"
+  alice <- getParty "Alice"
+  bob <- getParty "Bob"
+  charlie <- getParty "Charlie"
+
+  let
+    lessor = acme
+    address = "Flat in Kalau, Hawaii"
+
+  now <- getTime
+
+  -- Acme creates a flat
+  flatCid <- submit lessor do
+    create Flat with
+      lessor = lessor
+      visitor = lessor
+      address = address
+      history = [(now, lessor)]
+      sharers = [alice, bob, lessor]
+
+  -- Acme gives flat key to Alice
+  flatHandoverAliceCid <- submit lessor do
+    exercise flatCid Flat_Handover with newVisitor = alice
+
+  -- Acme can't hand the key yet, they just got the key. You can't
+  -- hand over the flat twice in the same instant of time.
+  submitMustFail alice do
+    exercise flatHandoverAliceCid FlatHandover_Accept
+
+  pass $ minutes 1
+
+  -- Alice accepts flat key
+  flatAliceCid <- submit alice do
+    exercise flatHandoverAliceCid FlatHandover_Accept
+
+  -- Acme can't hand the key over any more, because Alice has control of it
+  submitMustFail lessor do
+    exercise flatCid Flat_Handover with newVisitor = bob
+
+  pass $ minutes 1
+
+  -- Alice can't hand over to herself
+  submitMustFail alice do
+    exercise flatAliceCid Flat_Handover with newVisitor = alice
+
+  -- Alice hands over to Bob
+  flatHandoverBobCid <- submit alice do
+    exercise flatAliceCid Flat_Handover with newVisitor = bob
+
+  -- Alice was just kidding, and cancels the hand over.
+  flatAlice2Cid <- submit alice do
+    exercise flatHandoverBobCid FlatHandover_Cancel
+
+  -- Bob can't accept the flat key any more
+  submitMustFail bob do
+    exercise flatHandoverBobCid FlatHandover_Accept
+
+  -- Alice hands over for real
+  flatHandoverBob2Cid <- submit alice do
+    exercise flatAlice2Cid Flat_Handover with newVisitor = bob
+
+  -- Bob accepts the flat key
+  flatBobCid <- submit bob do
+    exercise flatHandoverBob2Cid FlatHandover_Accept
+
+  -- Bob tries to hand over to Charlie, but can't, because Charlie isn't a sharer.
+  submitMustFail bob do
+    exercise flatBobCid Flat_Handover with newVisitor = charlie
+
+  -- Bob tries to add Charlie as a sharer, but can't, because Bob isn't the lessor.
+  submitMustFail bob do
+    exercise flatBobCid Flat_AddSharer with newSharer = charlie
+
+  -- Charlie is added as a sharer by the lessor.
+  flatBob2Cid <- submit lessor do
+    exercise flatBobCid Flat_AddSharer with newSharer = charlie
+
+  -- Bob can now hand over to Charlie
+  flatHandoverCharlieCid <- submit bob do
+    exercise flatBob2Cid Flat_Handover with newVisitor = charlie
+
+  -- Charlie doesn't want it after all
+  flatBob3Cid <- submit charlie do
+    exercise flatHandoverCharlieCid FlatHandover_Reject
+
+  -- Acme Retreats Co tries to kick out Bob, but they have to let Bob use the flat for some time.
+  submitMustFail lessor do
+    exercise flatBob3Cid Flat_TakeOver with newVisitor = alice
+
+  pass $ days 7
+  pass $ minutes 1
+
+  -- Acme Retreats Co can kick out Bob after it's been over a week
+  flatHandoverAlice2Cid <- submit lessor do
+    exercise flatBob3Cid Flat_TakeOver with newVisitor = alice
+
+  -- Alice accepts the flat key
+  flatAlice3Cid <- submit alice do
+    exercise flatHandoverAlice2Cid FlatHandover_Accept
+
+  return ()

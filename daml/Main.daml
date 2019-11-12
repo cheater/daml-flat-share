@@ -1,0 +1,39 @@
+-- Copyright (c) 2019 The DAML Authors. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+daml 1.2
+module Main where
+
+import Flat
+import DA.Time (pass, minutes)
+
+setup = scenario do
+  acme <- getParty "Acme Retreats Co"
+  alice <- getParty "Alice"
+  bob <- getParty "Bob"
+  charlie <- getParty "Charlie"
+
+  let
+    lessor = acme
+    address = "Flat in Kalau, Hawaii"
+
+  now <- getTime
+
+  -- Acme creates a flat
+  flatCid <- submit lessor do
+    create Flat with
+      lessor = lessor
+      visitor = lessor
+      address = address
+      history = [(now, lessor)]
+      sharers = [alice, bob, lessor]
+
+  -- Acme gives flat key to Alice
+  flatHandoverAliceCid <- submit lessor do
+    exercise flatCid Flat_Handover with newVisitor = alice
+
+  pass $ minutes 1
+
+  -- Alice accepts flat key
+  submit alice do
+    exercise flatHandoverAliceCid FlatHandover_Accept
